@@ -11,15 +11,15 @@ namespace Stallion
         private string baseGameName = "Burnout Paradise Remastered";
 
         // TODO: Move to configuration file
-        private string installLocation;
+        private string? installLocation;
         private string apiURL = "https://api.github.com";
         private string username = "FrowningFrog";
         private string repo = "burnout_mods";
 
         // TODO: Move all external logic out of form
-        private List<GitModsListing> _gitModListings;
-        private HttpClient _httpClient;
-        private ListView _selectedListView;
+        private List<GitModsListing>? _gitModListings;
+        private HttpClient? _httpClient;
+        private ListView? _selectedListView;
 
         // BIG TODO: Move downloading functionality out of user interface
 
@@ -58,13 +58,15 @@ namespace Stallion
                     GitModsListing modFolderListing = new();
                     
                     tabControl1.TabPages.Add(modTypeFolder.value.name);
-                    
+
                     // Construct ListView
-                    ListView lV = new();
-                    lV.Location = Point.Empty;
-                    lV.Parent = tabControl1.TabPages[modTypeFolder.index];
-                    lV.Dock = DockStyle.Fill;
-                    lV.View = View.List;
+                    ListView lV = new()
+                    {
+                        Location = Point.Empty,
+                        Parent = tabControl1.TabPages[modTypeFolder.index],
+                        Dock = DockStyle.Fill,
+                        View = View.List
+                    };
 
                     // Get API request for subfolders (mods)
                     var modFolders = GetListingsFromAPIAsync(username, repo, modTypeFolder.value.name).Result;
@@ -73,8 +75,12 @@ namespace Stallion
                     // Add ListView items
                     for (var i = 0; i < modFolders.Count; i++)
                     {
+                        var gitObjects = GetListingsFromAPIAsync(username, repo, $"{modTypeFolder.value.name}/{modFolders[i].name}").Result;
+                        
+                        if (gitObjects == null) continue;
+                        
                         var modJsons =
-                            FilterGitObjects(GetListingsFromAPIAsync(username, repo, $"{modTypeFolder.value.name}/{modFolders[i].name}").Result, GitObjectFilterType.ModJson);
+                            FilterGitObjects(gitObjects, GitObjectFilterType.Json);
 
                         foreach (var modListing in modJsons.Select((value, index) => new { value, index }))
                         {
@@ -84,11 +90,11 @@ namespace Stallion
 
                             // Hack cuz json deserializer doesn't like non-listed types
                             var deserializedJson = JsonConvert.DeserializeObject<List<ModJson>>(rawJson);
-                            gitObject.modJson = deserializedJson[0];
+                            gitObject.modJson = deserializedJson?[0];
 
                             modFolderListing.listings[i] = gitObject;
 
-                            lV.Items.Add(gitObject.modJson.Value.mod_name);
+                            lV.Items.Add(gitObject.modJson?.mod_name);
                         }
                     }
 
@@ -112,8 +118,15 @@ namespace Stallion
 
         void ConstructHttpAPI(string baseURL)
         {
-            _httpClient = new HttpClient();
-            _httpClient.BaseAddress = new Uri(baseURL);
+            _httpClient = new HttpClient
+            {
+                BaseAddress = new Uri(baseURL),
+                DefaultRequestVersion = null,
+                DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrLower,
+                MaxResponseContentBufferSize = 0,
+                Timeout = default
+            };
+
             _httpClient.DefaultRequestHeaders.Accept.Clear();
             _httpClient.DefaultRequestHeaders.Add("User-Agent",
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/109.0");
@@ -150,14 +163,14 @@ namespace Stallion
 
         List<GitObject> FilterGitObjects(List<GitObject> list, GitObjectFilterType filterType)
         {
-            var filter = string.Empty;
+            string filter;
 
             switch (filterType)
             {
                 case GitObjectFilterType.Directory:
                     filter = "dir";
                     break;
-                case GitObjectFilterType.ModJson:
+                case GitObjectFilterType.Json:
                 case GitObjectFilterType.File:
                     filter = "file";
                     break;
@@ -173,9 +186,17 @@ namespace Stallion
                 {
                     outList.Add(listing.value);
                 }
-                else if (filterType == GitObjectFilterType.ModJson && listing.value.name != "mod.json")
+                else switch (filterType)
                 {
-                    outList.Add(listing.value);
+                    case GitObjectFilterType.Json when listing.value.name.Contains(".json"):
+                        outList.Add(listing.value);
+                        break;
+                    case GitObjectFilterType.Directory:
+                        break;
+                    case GitObjectFilterType.File:
+                        break;
+                    default:
+                        throw new ArgumentOutOfRangeException(nameof(filterType), filterType, null);
                 }
             }
 
@@ -211,16 +232,15 @@ namespace Stallion
 
             for (var i = 0; i < _selectedListView.SelectedIndices.Count; i++)
             {
-                if (!InstallMod(_gitModListings[tabControl1.SelectedIndex].listings[i]))
-                {
-                    MessageBox.Show(
-                        $"Failed to install {_gitModListings[tabControl1.SelectedIndex].listings[i].name}!",
-                        Application.ProductName,
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Exclamation
-                    );
-                    return false;
-                }
+                if (InstallMod(_gitModListings[tabControl1.SelectedIndex].listings[i])) continue;
+
+                MessageBox.Show(
+                    $"Failed to install {_gitModListings[tabControl1.SelectedIndex].listings[i].name}!",
+                    Application.ProductName,
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Exclamation
+                );
+                return false;
             }
 
             return true;
@@ -287,8 +307,7 @@ namespace Stallion
         {
             Directory,
             File,
-            ModJson,
-            RootJson
+            Json
         }
 
         #region UI Handlers
@@ -306,9 +325,9 @@ namespace Stallion
 
         private void infoToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            Bitmap rotatedBmp = new Bitmap(384, 384);
+            var rotatedBmp = new Bitmap(384, 384);
 
-            using (Graphics g = Graphics.FromImage(rotatedBmp))
+            using (var g = Graphics.FromImage(rotatedBmp))
             {
                 g.TranslateTransform(Properties.Resources.TestImage.Width / 1.578f, Properties.Resources.TestImage.Height / 1.9f);
                 g.RotateTransform(-10.95f);
