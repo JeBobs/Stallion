@@ -399,3 +399,4 @@ FodyWeavers.xsd
 
 # Exclude the resources
 [Ss]tallion/[Rr]esources
+[Ss]tallion/[Rr]esources/
