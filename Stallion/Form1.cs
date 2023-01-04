@@ -12,26 +12,32 @@ namespace Stallion
 
         // TODO: Move to configuration file
         private string? installLocation;
-        private string apiURL = "https://api.github.com";
-        private string username = "FrowningToad";
-        private string repo = "burnout_mods";
+        private Endpoint mainEndpoint;
 
         // TODO: Move all external logic out of form
         private List<GitModsListing>? _gitModListings;
         private HttpClient? _httpClient;
         private ListView? _selectedListView;
 
-        // BIG TODO: Move downloading functionality out of user interface
-
         public Form1()
         {
+            // TODO: Move to config
+            mainEndpoint = new Endpoint
+            {
+                URL = "https://api.github.com",
+                Accept = "application/vnd.github+json",
+                Owner = "FrowningToad",
+                Repo = "burnout_mods"
+            };
+
             InitializeComponent();
-            ConstructHttpAPI(apiURL);
+            ConstructHttpAPI(mainEndpoint.URL);
             CreateTabsFromRepo();
 
             SetCurrentListView();
         }
 
+        // BIG TODO: FIND A WAY TO USE LESS API CALLS
         void CreateTabsFromRepo()
         {
             tabControl1.TabPages.Clear();
@@ -39,7 +45,7 @@ namespace Stallion
             _gitModListings = new List<GitModsListing>();
 
             // Get API request for root folders
-            var modTypeAsync = GetListingsFromAPIAsync(username, repo).Result;
+            var modTypeAsync = GetListingsFromAPIAsync(mainEndpoint.Owner, mainEndpoint.Repo).Result;
 
             // Mod type sanity check
             if (modTypeAsync != null)
@@ -51,7 +57,7 @@ namespace Stallion
                 goto ERROR;
             }
 
-            if (modTypeAsync != null)
+            if (modTypeAsync.Count > 0)
             {
                 foreach (var modTypeFolder in modTypeAsync.Select((value, index) => new { value, index }))
                 {
@@ -69,13 +75,13 @@ namespace Stallion
                     };
 
                     // Get API request for subfolders (mods)
-                    var modFolders = GetListingsFromAPIAsync(username, repo, modTypeFolder.value.name).Result;
+                    var modFolders = GetListingsFromAPIAsync(mainEndpoint.Owner, mainEndpoint.Repo, modTypeFolder.value.name).Result;
                     modFolderListing.Listings = modFolders;
 
                     // Add ListView items
                     for (var i = 0; i < modFolders.Count; i++)
                     {
-                        var gitObjects = GetListingsFromAPIAsync(username, repo, $"{modTypeFolder.value.name}/{modFolders[i].name}").Result;
+                        var gitObjects = GetListingsFromAPIAsync(mainEndpoint.Owner, mainEndpoint.Repo, $"{modTypeFolder.value.name}/{modFolders[i].name}").Result;
                         
                         if (gitObjects == null) continue;
                         
@@ -85,6 +91,8 @@ namespace Stallion
                         foreach (var modListing in modJsons.Select((value, index) => new { value, index }))
                         {
                             var rawJson = _httpClient.GetAsync(modListing.value.download_url).Result.Content.ReadAsStringAsync().Result + "\n";
+
+                            if (modFolderListing.Listings == null) continue;
 
                             var gitObject = modFolderListing.Listings[i];
 
@@ -109,7 +117,7 @@ namespace Stallion
 
             ERROR:
             MessageBox.Show(
-                $"CreateTabsFromRepo: Failed to retrieve {baseGameName} mods from {username}/{repo}. Reason: No mod types were found in the repository.",
+                $"CreateTabsFromRepo: Failed to retrieve {baseGameName} mods from {mainEndpoint.Owner}/{mainEndpoint.Repo}. Reason: No mod types were found in the repository.",
                 Application.ProductName,
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Exclamation
@@ -148,7 +156,7 @@ namespace Stallion
                 }
 
                 MessageBox.Show(
-                    $"GetListingsFromAPIAsync: Failed to retrieve {baseGameName} mods from {apiURL}{finalURL}. Reason: {(int)response.StatusCode} {response.ReasonPhrase}\n\n" +
+                    $"GetListingsFromAPIAsync: Failed to retrieve {baseGameName} mods from {mainEndpoint.URL}{finalURL}. Reason: {(int)response.StatusCode} {response.ReasonPhrase}\n\n" +
                     $"-- Debug --\n" +
                     $"Headers: {response.RequestMessage.Headers}\nMethod: {response.RequestMessage.Method}\nRequest URI: {response.RequestMessage.RequestUri}",
                     Application.ProductName,
@@ -162,7 +170,7 @@ namespace Stallion
 
             if (_httpClient == null)
             {
-                ConstructHttpAPI(apiURL);
+                ConstructHttpAPI(mainEndpoint.URL);
             }
 
             return await GetListingsFromAPIAsync(username, repository, subfolders);
@@ -282,6 +290,14 @@ namespace Stallion
             public string mod_version { get; set; }
             public string mod_description { get; set; }
             public string mod_image_link { get; set; }
+        }
+
+        struct Endpoint
+        {
+            public string URL { get; set; }
+            public string Accept { get; set; }
+            public string Owner { get; set; }
+            public string Repo { get; set; }
         }
 
         interface IJsonData  { /* Implement abstract json data if needed */ }
