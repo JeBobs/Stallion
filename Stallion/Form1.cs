@@ -1,6 +1,6 @@
-using System.Drawing.Drawing2D;
+using System.Net;
 using System.Net.Http.Headers;
-using System.Runtime.InteropServices.JavaScript;
+using System.Reflection.Metadata;
 using Newtonsoft.Json;
 
 namespace Stallion
@@ -13,7 +13,7 @@ namespace Stallion
         // TODO: Move to configuration file
         private string? installLocation;
         private string apiURL = "https://api.github.com";
-        private string username = "FrowningFrog";
+        private string username = "FrowningToad";
         private string repo = "burnout_mods";
 
         // TODO: Move all external logic out of form
@@ -27,7 +27,7 @@ namespace Stallion
         {
             InitializeComponent();
             ConstructHttpAPI(apiURL);
-            //CreateTabsFromRepo();
+            CreateTabsFromRepo();
 
             SetCurrentListView();
         }
@@ -70,7 +70,7 @@ namespace Stallion
 
                     // Get API request for subfolders (mods)
                     var modFolders = GetListingsFromAPIAsync(username, repo, modTypeFolder.value.name).Result;
-                    modFolderListing.listings = modFolders;
+                    modFolderListing.Listings = modFolders;
 
                     // Add ListView items
                     for (var i = 0; i < modFolders.Count; i++)
@@ -86,15 +86,15 @@ namespace Stallion
                         {
                             var rawJson = _httpClient.GetAsync(modListing.value.download_url).Result.Content.ReadAsStringAsync().Result + "\n";
 
-                            var gitObject = modFolderListing.listings[i];
+                            var gitObject = modFolderListing.Listings[i];
 
                             // Hack cuz json deserializer doesn't like non-listed types
                             var deserializedJson = JsonConvert.DeserializeObject<List<ModJson>>(rawJson);
-                            gitObject.modJson = deserializedJson?[0];
+                            gitObject.Json = deserializedJson?[0];
 
-                            modFolderListing.listings[i] = gitObject;
+                            modFolderListing.Listings[i] = gitObject;
 
-                            lV.Items.Add(gitObject.modJson?.mod_name);
+                            lV.Items.Add(((ModJson)gitObject.Json!).mod_name);
                         }
                     }
 
@@ -120,11 +120,7 @@ namespace Stallion
         {
             _httpClient = new HttpClient
             {
-                BaseAddress = new Uri(baseURL),
-                DefaultRequestVersion = null,
-                DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrLower,
-                MaxResponseContentBufferSize = 0,
-                Timeout = default
+                BaseAddress = new Uri(baseURL)
             };
 
             _httpClient.DefaultRequestHeaders.Accept.Clear();
@@ -136,19 +132,21 @@ namespace Stallion
         async Task<List<GitObject>?> GetListingsFromAPIAsync(string username, string repository, string subfolders = "")
         {
             var finalURL = $"/repos/{username}/{repository}/contents/{subfolders}";
+            var listings = new List<GitObject>();
 
-            var response = _httpClient.GetAsync(finalURL).Result;
-
-            if (response.IsSuccessStatusCode)
+            if (_httpClient != null)
             {
-                // request was successful, continue processing the response
-                var responseContent = await response.Content.ReadAsStringAsync() + "\n";
-                var listings = JsonConvert.DeserializeObject<List<GitObject>>(responseContent);
+                var response = _httpClient.GetAsync(finalURL).Result;
 
-                return listings;
-            }
-            else
-            {
+                if (response.IsSuccessStatusCode)
+                {
+                    // request was successful, continue processing the response
+                    var responseContent = await response.Content.ReadAsStringAsync() + "\n";
+                    listings = JsonConvert.DeserializeObject<List<GitObject>>(responseContent);
+
+                    return listings;
+                }
+
                 MessageBox.Show(
                     $"GetListingsFromAPIAsync: Failed to retrieve {baseGameName} mods from {apiURL}{finalURL}. Reason: {(int)response.StatusCode} {response.ReasonPhrase}\n\n" +
                     $"-- Debug --\n" +
@@ -157,8 +155,17 @@ namespace Stallion
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error
                 );
-                return null;
+                return listings;
             }
+            
+            // Reconstruct HTTP client and try again
+
+            if (_httpClient == null)
+            {
+                ConstructHttpAPI(apiURL);
+            }
+
+            return await GetListingsFromAPIAsync(username, repository, subfolders);
         }
 
         List<GitObject> FilterGitObjects(List<GitObject> list, GitObjectFilterType filterType)
@@ -232,10 +239,10 @@ namespace Stallion
 
             for (var i = 0; i < _selectedListView.SelectedIndices.Count; i++)
             {
-                if (InstallMod(_gitModListings[tabControl1.SelectedIndex].listings[i])) continue;
+                if (InstallMod(_gitModListings[tabControl1.SelectedIndex].Listings[i])) continue;
 
                 MessageBox.Show(
-                    $"Failed to install {_gitModListings[tabControl1.SelectedIndex].listings[i].name}!",
+                    $"Failed to install {_gitModListings[tabControl1.SelectedIndex].Listings[i].name}!",
                     Application.ProductName,
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Exclamation
@@ -252,33 +259,12 @@ namespace Stallion
             return true;
         }
 
-        void SetCurrentListView()
+        struct GitModsListing
         {
-            if (tabControl1.SelectedTab.HasChildren)
-            {
-                // HACKTACULAR
-                _selectedListView = (ListView)tabControl1.SelectedTab.Controls[0];
-            }
+            public List<GitObject>? Listings { get; set; }
         }
 
-        void ShowInstallLocationFolderSelectDialog()
-        {
-            if (folderBrowserDialog1.ShowDialog() == DialogResult.OK)
-            {
-                installLocation = folderBrowserDialog1.SelectedPath;
-            }
-            else
-            {
-                MessageBox.Show(
-                    $"Please select a valid {baseGameName} installation location.",
-                    Application.ProductName,
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Exclamation
-                );
-            }
-        }
-
-        struct GitObject
+        struct GitObject : IJsonData
         {
             public string name { get; set; }
             public string path { get; set; }
@@ -286,15 +272,10 @@ namespace Stallion
             public int size { get; set; }
             public string type { get; set; }
             public string download_url { get; set; }
-            public ModJson? modJson { get; set; }
+            public IJsonData? Json { get; set; }
         }
 
-        struct GitModsListing
-        {
-            public List<GitObject>? listings { get; set; }
-        }
-
-        struct ModJson
+        struct ModJson : IJsonData
         {
             public string mod_name { get; set; }
             public string mod_author { get; set; }
@@ -302,6 +283,8 @@ namespace Stallion
             public string mod_description { get; set; }
             public string mod_image_link { get; set; }
         }
+
+        interface IJsonData  { /* Implement abstract json data if needed */ }
 
         enum GitObjectFilterType
         {
@@ -354,20 +337,32 @@ namespace Stallion
             SetCurrentListView();
         }
 
-        #endregion
-
-        public Image RotateImage(Image img)
+        private void ShowInstallLocationFolderSelectDialog()
         {
-            var bmp = new Bitmap(img);
-
-            using (Graphics gfx = Graphics.FromImage(bmp))
+            if (folderBrowserDialog1.ShowDialog() == DialogResult.OK)
             {
-                gfx.Clear(Color.White);
-                gfx.DrawImage(img, 0, 0, img.Width, img.Height);
+                installLocation = folderBrowserDialog1.SelectedPath;
             }
-
-            bmp.RotateFlip(RotateFlipType.Rotate270FlipNone);
-            return bmp;
+            else
+            {
+                MessageBox.Show(
+                    $"Please select a valid {baseGameName} installation location.",
+                    Application.ProductName,
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Exclamation
+                );
+            }
         }
+
+        private void SetCurrentListView()
+        {
+            if (tabControl1.SelectedTab.HasChildren)
+            {
+                // HACKTACULAR
+                _selectedListView = (ListView)tabControl1.SelectedTab.Controls[0];
+            }
+        }
+
+        #endregion
     }
 }
